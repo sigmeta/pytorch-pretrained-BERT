@@ -33,7 +33,7 @@ from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm, trange
 
 from pytorch_pretrained_bert.file_utils import PYTORCH_PRETRAINED_BERT_CACHE
-from pytorch_pretrained_bert.modeling import BertForSequenceClassification, BertConfig, WEIGHTS_NAME, CONFIG_NAME
+from pytorch_pretrained_bert.modeling import BertForSequenceClassification, BertForPolyphonyClassification, BertConfig, WEIGHTS_NAME, CONFIG_NAME
 from pytorch_pretrained_bert.tokenization import BertTokenizer
 from pytorch_pretrained_bert.optimization import BertAdam, warmup_linear
 
@@ -44,50 +44,49 @@ logger = logging.getLogger(__name__)
 
 
 class InputExample(object):
-    """A single training/test example for simple sequence classification."""
+    """A single training/test example for polyphony classification."""
 
-    def __init__(self, guid, text, label=None):
+    def __init__(self, guid, text, label=None, position=None):
         """Constructs a InputExample.
 
         Args:
             guid: Unique id for the example.
-            text_a: string. The untokenized text of the first sequence. For single
-            sequence tasks, only this sequence must be specified.
-            text_b: (Optional) string. The untokenized text of the second sequence.
-            Only must be specified for sequence pair tasks.
+            text_: string. The untokenized text of the sequence.
             label: (Optional) string. The label of the example. This should be
             specified for train and dev examples, but not for test examples.
+            position: int. The position of the polyphony token.
         """
         self.guid = guid
         self.text = text
         self.label = label
-
+        self.position = position
 
 class InputFeatures(object):
     """A single set of features of data."""
 
-    def __init__(self, input_ids, input_mask, label_id):
+    def __init__(self, input_ids, input_mask, label_id, label_pos):
         self.input_ids = input_ids
         self.input_mask = input_mask
         self.label_id = label_id
+        self.label_pos = label_pos
 
 
 class DataProcessor(object):
-    """Base class for data converters for sequence classification data sets."""
+    """Base class for data converters for polyphony classification data sets."""
 
     def get_train_examples(self, data_dir):
         """Gets a collection of `InputExample`s for the train set."""
         logger.info("LOOKING AT {}".format(os.path.join(data_dir, "train.json")))
         with open(os.path.join(data_dir, "train.json"), encoding='utf8') as f:
             train_list = json.loads(f.read())
-        return train_list
+        return self._create_examples(train_list)
 
-    def get_test_examples(self, data_dir):
+    def get_dev_examples(self, data_dir):
         """Gets a collection of `InputExample`s for the dev set."""
         logger.info("LOOKING AT {}".format(os.path.join(data_dir, "test.json")))
         with open(os.path.join(data_dir, "test.json"), encoding='utf8') as f:
             test_list = json.loads(f.read())
-        return test_list
+        return self._create_examples(test_list)
 
     def get_labels(self, data_dir):
         """Gets the list of labels for this data set."""
@@ -95,6 +94,18 @@ class DataProcessor(object):
         with open(os.path.join(data_dir, "info.json"), encoding='utf8') as f:
             info = json.loads(f.read())
         return info["phones"]
+
+    def _create_examples(self, dcts):
+        """Creates examples for the training and dev sets."""
+        examples = []
+        for (i, dct) in enumerate(dcts):
+            guid = "%s-%s" % (0, i)
+            text = dct['text']
+            label = dct['phone']
+            position = dct['position']
+            examples.append(
+                InputExample(guid=guid, text=text, label=label, position=position))
+        return examples
 
 
 def convert_examples_to_features(examples, label_list, max_seq_length, tokenizer):
@@ -124,12 +135,13 @@ def convert_examples_to_features(examples, label_list, max_seq_length, tokenizer
         # since the [SEP] token unambigiously separates the sequences, but it makes
         # it easier for the model to learn the concept of sequences.
         #
-        # For classification tasks, the first vector (corresponding to [CLS]) is
+        # For the polyphony classification task, the polyphony vector is
         # used as as the "sentence vector". Note that this only makes sense because
         # the entire model is fine-tuned.
         tokens = ["[CLS]"] + tokens_a + ["[SEP]"]
 
         input_ids = tokenizer.convert_tokens_to_ids(tokens)
+        assert len(tokens)==len(input_ids)
 
         # The mask has 1 for real tokens and 0 for padding tokens. Only real
         # tokens are attended to.
@@ -144,6 +156,9 @@ def convert_examples_to_features(examples, label_list, max_seq_length, tokenizer
         assert len(input_mask) == max_seq_length
 
         label_id = label_map[example.label]
+        label_pos = example.position+1 #First token is [cls]
+        #label_ids=[-1]*max_seq_length
+        #label_ids[label_pos + 1] = label_id
         if ex_index < 5:
             logger.info("*** Example ***")
             logger.info("guid: %s" % (example.guid))
@@ -156,7 +171,8 @@ def convert_examples_to_features(examples, label_list, max_seq_length, tokenizer
         features.append(
                 InputFeatures(input_ids=input_ids,
                               input_mask=input_mask,
-                              label_id=label_id))
+                              label_id=label_id,
+                              label_pos=label_pos))
     return features
 
 
@@ -177,11 +193,6 @@ def main():
                         help="Bert pre-trained model selected in the list: bert-base-uncased, "
                         "bert-large-uncased, bert-base-cased, bert-large-cased, bert-base-multilingual-uncased, "
                         "bert-base-multilingual-cased, bert-base-chinese.")
-    parser.add_argument("--task_name",
-                        default=None,
-                        type=str,
-                        required=True,
-                        help="The name of the task to train.")
     parser.add_argument("--output_dir",
                         default=None,
                         type=str,
@@ -194,7 +205,7 @@ def main():
                         type=str,
                         help="Where do you want to store the pre-trained models downloaded from s3")
     parser.add_argument("--max_seq_length",
-                        default=128,
+                        default=512,
                         type=int,
                         help="The maximum total input sequence length after WordPiece tokenization. \n"
                              "Sequences longer than this will be truncated, and sequences shorter \n"
@@ -263,19 +274,6 @@ def main():
         ptvsd.enable_attach(address=(args.server_ip, args.server_port), redirect_output=True)
         ptvsd.wait_for_attach()
 
-    processors = {
-        "cola": ColaProcessor,
-        "mnli": MnliProcessor,
-        "mrpc": MrpcProcessor,
-        "sst-2": Sst2Processor,
-    }
-
-    num_labels_task = {
-        "cola": 2,
-        "sst-2": 2,
-        "mnli": 3,
-        "mrpc": 2,
-    }
 
     if args.local_rank == -1 or args.no_cuda:
         device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
@@ -309,14 +307,10 @@ def main():
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
 
-    task_name = args.task_name.lower()
 
-    if task_name not in processors:
-        raise ValueError("Task not found: %s" % (task_name))
-
-    processor = processors[task_name]()
-    num_labels = num_labels_task[task_name]
-    label_list = processor.get_labels()
+    processor = DataProcessor()
+    label_list = processor.get_labels(args.data_dir)
+    num_labels = len(label_list)
 
     tokenizer = BertTokenizer.from_pretrained(args.bert_model, do_lower_case=args.do_lower_case)
 
@@ -331,7 +325,7 @@ def main():
 
     # Prepare model
     cache_dir = args.cache_dir if args.cache_dir else os.path.join(str(PYTORCH_PRETRAINED_BERT_CACHE), 'distributed_{}'.format(args.local_rank))
-    model = BertForSequenceClassification.from_pretrained(args.bert_model,
+    model = BertForPolyphonyClassification.from_pretrained(args.bert_model,
               cache_dir=cache_dir,
               num_labels = num_labels)
     if args.fp16:
@@ -388,9 +382,9 @@ def main():
         logger.info("  Num steps = %d", num_train_optimization_steps)
         all_input_ids = torch.tensor([f.input_ids for f in train_features], dtype=torch.long)
         all_input_mask = torch.tensor([f.input_mask for f in train_features], dtype=torch.long)
-        all_segment_ids = torch.tensor([f.segment_ids for f in train_features], dtype=torch.long)
         all_label_ids = torch.tensor([f.label_id for f in train_features], dtype=torch.long)
-        train_data = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_label_ids)
+        all_label_poss = torch.tensor([f.label_pos for f in train_features], dtype=torch.long)
+        train_data = TensorDataset(all_input_ids, all_input_mask, all_label_ids, all_label_poss)
         if args.local_rank == -1:
             train_sampler = RandomSampler(train_data)
         else:
@@ -403,8 +397,8 @@ def main():
             nb_tr_examples, nb_tr_steps = 0, 0
             for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration")):
                 batch = tuple(t.to(device) for t in batch)
-                input_ids, input_mask, segment_ids, label_ids = batch
-                loss = model(input_ids, segment_ids, input_mask, label_ids)
+                input_ids, input_mask, label_ids, label_poss = batch
+                loss = model(input_ids, input_mask, label_ids, label_poss)
                 if n_gpu > 1:
                     loss = loss.mean() # mean() to average on multi-gpu.
                 if args.gradient_accumulation_steps > 1:
@@ -440,10 +434,10 @@ def main():
 
         # Load a trained model and config that you have fine-tuned
         config = BertConfig(output_config_file)
-        model = BertForSequenceClassification(config, num_labels=num_labels)
+        model = BertForPolyphonyClassification(config, num_labels = num_labels)
         model.load_state_dict(torch.load(output_model_file))
     else:
-        model = BertForSequenceClassification.from_pretrained(args.bert_model, num_labels=num_labels)
+        model = BertForPolyphonyClassification.from_pretrained(args.bert_model, num_labels = num_labels)
     model.to(device)
 
     if args.do_eval and (args.local_rank == -1 or torch.distributed.get_rank() == 0):
@@ -455,9 +449,9 @@ def main():
         logger.info("  Batch size = %d", args.eval_batch_size)
         all_input_ids = torch.tensor([f.input_ids for f in eval_features], dtype=torch.long)
         all_input_mask = torch.tensor([f.input_mask for f in eval_features], dtype=torch.long)
-        all_segment_ids = torch.tensor([f.segment_ids for f in eval_features], dtype=torch.long)
         all_label_ids = torch.tensor([f.label_id for f in eval_features], dtype=torch.long)
-        eval_data = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_label_ids)
+        all_label_poss = torch.tensor([f.label_pos for f in train_features], dtype=torch.long)
+        eval_data = TensorDataset(all_input_ids, all_input_mask, all_label_ids, all_label_poss)
         # Run prediction for full data
         eval_sampler = SequentialSampler(eval_data)
         eval_dataloader = DataLoader(eval_data, sampler=eval_sampler, batch_size=args.eval_batch_size)
@@ -466,15 +460,15 @@ def main():
         eval_loss, eval_accuracy = 0, 0
         nb_eval_steps, nb_eval_examples = 0, 0
 
-        for input_ids, input_mask, segment_ids, label_ids in tqdm(eval_dataloader, desc="Evaluating"):
+        for input_ids, input_mask, label_ids, label_poss in tqdm(eval_dataloader, desc="Evaluating"):
             input_ids = input_ids.to(device)
             input_mask = input_mask.to(device)
-            segment_ids = segment_ids.to(device)
             label_ids = label_ids.to(device)
+            label_poss = label_poss.to(device)
 
             with torch.no_grad():
-                tmp_eval_loss = model(input_ids, segment_ids, input_mask, label_ids)
-                logits = model(input_ids, segment_ids, input_mask)
+                tmp_eval_loss = model(input_ids, input_mask, label_ids, label_poss)
+                logits = model(input_ids, input_mask)
 
             logits = logits.detach().cpu().numpy()
             label_ids = label_ids.to('cpu').numpy()
