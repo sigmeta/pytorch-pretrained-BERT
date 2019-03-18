@@ -154,9 +154,11 @@ def convert_examples_to_features(examples, label_list, max_seq_length, tokenizer
 
         assert len(input_ids) == max_seq_length
         assert len(input_mask) == max_seq_length
-
+ 
         label_id = label_map[example.label]
         label_pos = example.position+1 #First token is [cls]
+        if label_pos>=max_seq_length-1: label_pos=0
+        assert label_pos<max_seq_length
         #label_ids=[-1]*max_seq_length
         #label_ids[label_pos + 1] = label_id
         if ex_index < 5:
@@ -311,7 +313,7 @@ def main():
     processor = DataProcessor()
     label_list = processor.get_labels(args.data_dir)
     num_labels = len(label_list)
-
+    logger.info("num_labels:"+str(num_labels))
     tokenizer = BertTokenizer.from_pretrained(args.bert_model, do_lower_case=args.do_lower_case)
 
     train_examples = None
@@ -450,7 +452,7 @@ def main():
         all_input_ids = torch.tensor([f.input_ids for f in eval_features], dtype=torch.long)
         all_input_mask = torch.tensor([f.input_mask for f in eval_features], dtype=torch.long)
         all_label_ids = torch.tensor([f.label_id for f in eval_features], dtype=torch.long)
-        all_label_poss = torch.tensor([f.label_pos for f in train_features], dtype=torch.long)
+        all_label_poss = torch.tensor([f.label_pos for f in eval_features], dtype=torch.long)
         eval_data = TensorDataset(all_input_ids, all_input_mask, all_label_ids, all_label_poss)
         # Run prediction for full data
         eval_sampler = SequentialSampler(eval_data)
@@ -468,8 +470,8 @@ def main():
 
             with torch.no_grad():
                 tmp_eval_loss = model(input_ids, input_mask, label_ids, label_poss)
-                logits = model(input_ids, input_mask)
-
+                logits = model(input_ids, input_mask, position=label_poss)
+            #print(logits.size())
             logits = logits.detach().cpu().numpy()
             label_ids = label_ids.to('cpu').numpy()
             tmp_eval_accuracy = accuracy(logits, label_ids)

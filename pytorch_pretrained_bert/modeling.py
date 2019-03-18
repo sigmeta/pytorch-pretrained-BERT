@@ -1027,14 +1027,19 @@ class BertForPolyphonyClassification(BertPreTrainedModel):
     def __init__(self, config, num_labels):
         super(BertForPolyphonyClassification, self).__init__(config)
         self.num_labels = num_labels
+        print(num_labels)
         self.bert = BertModel(config)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
         self.classifier = nn.Linear(config.hidden_size, num_labels)
         self.apply(self.init_bert_weights)
 
     def forward(self, input_ids, attention_mask=None, labels=None, position=None, token_type_ids=None):
-        output, _ = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False)
-        output = output[:,position]
+        output, pooled_output = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False)
+        #logger.info(output.size())
+        #logger.info(labels.size())
+        #logger.info(position.size())
+        output = torch.gather(output,dim=1,index=position.unsqueeze(dim=-1).expand(position.size()[-1],output.size()[-1]).unsqueeze(dim=1).long())
+        #logger.info(output.size())
         output = self.dropout(output)
         logits = self.classifier(output)
 
@@ -1043,7 +1048,7 @@ class BertForPolyphonyClassification(BertPreTrainedModel):
             loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
             return loss
         else:
-            return logits
+            return logits.squeeze(1)
 
 
 class BertForMultipleChoice(BertPreTrainedModel):
