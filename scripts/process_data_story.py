@@ -62,10 +62,10 @@ for word in words:
             if w == case.getAttribute('pron_polyword'):
                 js_data['position'] = i
         # cut the text if too long
-        if js_data['position'] > 120:
+        if js_data['position'] > 60:
             print(js_data['position'])
-            js_data['text'] = js_data['text'][js_data['position'] - 100:]
-            js_data['position'] = 100
+            js_data['text'] = js_data['text'][js_data['position'] - 40:]
+            js_data['position'] = 40
         assert js_data['position'] != -1
         assert js_data['text'][js_data['position']]==case.getAttribute('pron_polyword')
         js_data['phone'] = case.getElementsByTagName("part")[0].childNodes[0].data
@@ -87,10 +87,10 @@ for word in words:
             if w == char:
                 js_data['position'] = i
         # cut the text if too long
-        if js_data['position'] > 120:
+        if js_data['position'] > 60:
             print(js_data['position'])
-            js_data['text'] = js_data['text'][js_data['position'] - 100:]
-            js_data['position'] = 100
+            js_data['text'] = js_data['text'][js_data['position'] - 40:]
+            js_data['position'] = 40
         assert js_data['position'] != -1
         assert js_data['text'][js_data['position']]==char
         for w in si.getElementsByTagName("w"):
