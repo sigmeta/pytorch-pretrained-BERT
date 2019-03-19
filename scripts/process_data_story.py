@@ -11,7 +11,7 @@ wpaths=plist
 phones=set()
 train=[]
 test=[]
-
+max_length_cut=100
 def get_data(char, path, split):
     DOMTree = xml.dom.minidom.parse(path)
     collection = DOMTree.documentElement
@@ -62,10 +62,10 @@ for word in words:
             if w == case.getAttribute('pron_polyword'):
                 js_data['position'] = i
         # cut the text if too long
-        if js_data['position'] > 40:
+        if js_data['position'] > max_length_cut:
             print(js_data['position'])
-            js_data['text'] = js_data['text'][js_data['position'] - 40:]
-            js_data['position'] = 40
+            js_data['text'] = js_data['text'][js_data['position'] - max_length_cut:]
+            js_data['position'] = max_length_cut
         assert js_data['position'] != -1
         assert js_data['text'][js_data['position']]==case.getAttribute('pron_polyword')
         js_data['phone'] = case.getElementsByTagName("part")[0].childNodes[0].data
@@ -87,10 +87,10 @@ for word in words:
             if w == char:
                 js_data['position'] = i
         # cut the text if too long
-        if js_data['position'] > 40:
+        if js_data['position'] > max_length_cut:
             print(js_data['position'])
-            js_data['text'] = js_data['text'][js_data['position'] - 40:]
-            js_data['position'] = 40
+            js_data['text'] = js_data['text'][js_data['position'] - max_length_cut:]
+            js_data['position'] = max_length_cut
         assert js_data['position'] != -1
         assert js_data['text'][js_data['position']]==char
         for w in si.getElementsByTagName("w"):
