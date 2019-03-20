@@ -63,12 +63,12 @@ for word in words:
                 js_data['position'] = i
         # cut the text if too long
         if js_data['position'] > max_length_cut:
-            print(js_data['position'])
+            #print(js_data['position'])
             js_data['text'] = js_data['text'][js_data['position'] - max_length_cut:]
             js_data['position'] = max_length_cut
         assert js_data['position'] != -1
         assert js_data['text'][js_data['position']]==case.getAttribute('pron_polyword')
-        js_data['phone'] = case.getElementsByTagName("part")[0].childNodes[0].data
+        js_data['phone'] = js_data['char']+case.getElementsByTagName("part")[0].childNodes[0].data
         phones.add(js_data['phone'])
         test.append(js_data)
 
@@ -88,14 +88,14 @@ for word in words:
                 js_data['position'] = i
         # cut the text if too long
         if js_data['position'] > max_length_cut:
-            print(js_data['position'])
+            #print(js_data['position'])
             js_data['text'] = js_data['text'][js_data['position'] - max_length_cut:]
             js_data['position'] = max_length_cut
         assert js_data['position'] != -1
         assert js_data['text'][js_data['position']]==char
         for w in si.getElementsByTagName("w"):
             if w.getAttribute('v') == char:
-                js_data['phone'] = w.getAttribute('p')
+                js_data['phone'] = js_data['char']+w.getAttribute('p')
         assert 'phone' in js_data.keys()
         #assert js_data['phone'] in phones
         if js_data['phone'] not in phones:
@@ -103,6 +103,7 @@ for word in words:
             phones.add(js_data['phone'])
         train.append(js_data)
 
+print(len(phones),phones)
 
 #save
 with open("../data/train.json",'w',encoding='utf8') as f:

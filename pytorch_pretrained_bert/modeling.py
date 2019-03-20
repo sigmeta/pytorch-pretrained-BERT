@@ -1034,11 +1034,11 @@ class BertForPolyphonyClassification(BertPreTrainedModel):
         self.apply(self.init_bert_weights)
 
     def forward(self, input_ids, attention_mask=None, labels=None, position=None, token_type_ids=None):
-        output, pooled_output = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False)
+        sequence_output, pooled_output = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False)
         #logger.info(output.size())
         #logger.info(labels.size())
         #logger.info(position.size())
-        output = torch.gather(output,dim=1,index=position.unsqueeze(dim=-1).expand(position.size()[-1],output.size()[-1]).unsqueeze(dim=1).long())
+        output = torch.gather(sequence_output,dim=1,index=position.unsqueeze(dim=-1).expand(position.size()[-1],sequence_output.size()[-1]).unsqueeze(dim=1).long())
         #logger.info(output.size())
         output = self.dropout(output)
         logits = self.classifier(output)
@@ -1049,6 +1049,73 @@ class BertForPolyphonyClassification(BertPreTrainedModel):
             return loss
         else:
             return logits.squeeze(1)
+
+
+class BertForPolyphony2Classification(BertPreTrainedModel):
+    """BERT model for classification.
+    This module is composed of the BERT model with a linear layer on top of
+    the output of the [cls] token. And the token to be predicted is marked by token_type_ids
+
+    Params:
+        `config`: a BertConfig class instance with the configuration to build a new model.
+        `num_labels`: the number of classes for the classifier. Default = 2.
+
+    Inputs:
+        `input_ids`: a torch.LongTensor of shape [batch_size, sequence_length]
+            with the word token indices in the vocabulary(see the tokens preprocessing logic in the scripts
+            `extract_features.py`, `run_classifier.py` and `run_squad.py`)
+        `token_type_ids`: an optional torch.LongTensor of shape [batch_size, sequence_length] with the token
+            types indices selected in [0, 1]. Type 0 corresponds normal token and type 1 corresponds to
+            the token to be predicted.
+        `attention_mask`: an optional torch.LongTensor of shape [batch_size, sequence_length] with indices
+            selected in [0, 1]. It's a mask to be used if the input sequence length is smaller than the max
+            input sequence length in the current batch. It's the mask that we typically use for attention when
+            a batch has varying length sentences.
+        `labels`: labels for the classification output: torch.LongTensor of shape [batch_size]
+            with indices selected in [0, ..., num_labels].
+
+    Outputs:
+        if `labels` is not `None`:
+            Outputs the CrossEntropy classification loss of the output with the labels.
+        if `labels` is `None`:
+            Outputs the classification logits of shape [batch_size, num_labels].
+
+    Example usage:
+    ```python
+    # Already been converted into WordPiece token ids
+    input_ids = torch.LongTensor([[31, 51, 99], [15, 5, 0]])
+    input_mask = torch.LongTensor([[1, 1, 1], [1, 1, 0]])
+    token_type_ids = torch.LongTensor([[0, 0, 1], [0, 1, 0]])
+
+    config = BertConfig(vocab_size_or_config_json_file=32000, hidden_size=768,
+        num_hidden_layers=12, num_attention_heads=12, intermediate_size=3072)
+
+    num_labels = 2
+
+    model = BertForSequenceClassification(config, num_labels)
+    logits = model(input_ids, token_type_ids, input_mask)
+    ```
+    """
+    def __init__(self, config, num_labels):
+        super(BertForPolyphonyClassification, self).__init__(config)
+        self.num_labels = num_labels
+        print(num_labels)
+        self.bert = BertModel(config)
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+        self.classifier = nn.Linear(config.hidden_size, num_labels)
+        self.apply(self.init_bert_weights)
+
+    def forward(self, input_ids, attention_mask=None, labels=None, position=None, token_type_ids=None):
+        sequence_output, pooled_output = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False)
+        pooled_output = self.dropout(pooled_output)
+        logits = self.classifier(pooled_output)
+
+        if labels is not None:
+            loss_fct = CrossEntropyLoss()
+            loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
+            return loss
+        else:
+            return logits
 
 
 class BertForMultipleChoice(BertPreTrainedModel):
