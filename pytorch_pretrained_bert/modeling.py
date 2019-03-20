@@ -1097,7 +1097,7 @@ class BertForPolyphony2Classification(BertPreTrainedModel):
     ```
     """
     def __init__(self, config, num_labels):
-        super(BertForPolyphonyClassification, self).__init__(config)
+        super(BertForPolyphony2Classification, self).__init__(config)
         self.num_labels = num_labels
         print(num_labels)
         self.bert = BertModel(config)
