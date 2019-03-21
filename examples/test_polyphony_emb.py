@@ -33,25 +33,26 @@ from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm, trange
 
 from pytorch_pretrained_bert.file_utils import PYTORCH_PRETRAINED_BERT_CACHE
-from pytorch_pretrained_bert.modeling import BertForSequenceClassification, BertForPolyphony2Classification, BertConfig, WEIGHTS_NAME, CONFIG_NAME
+from pytorch_pretrained_bert.modeling import BertForSequenceClassification, BertForPolyphony2Classification, BertConfig, \
+    WEIGHTS_NAME, CONFIG_NAME
 from pytorch_pretrained_bert.tokenization import BertTokenizer
 from pytorch_pretrained_bert.optimization import BertAdam, warmup_linear
 
-logging.basicConfig(format = '%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
-                    datefmt = '%m/%d/%Y %H:%M:%S',
-                    level = logging.INFO)
+logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
+                    datefmt='%m/%d/%Y %H:%M:%S',
+                    level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
 class InputExample(object):
     """A single training/test example for polyphony classification."""
 
-    def __init__(self, guid, text, label=None, position=None):
+    def __init__(self, guid, text, char, label=None, position=None):
         """Constructs a InputExample.
 
         Args:
             guid: Unique id for the example.
-            text: string. The untokenized text of the sequence.
+            text_: string. The untokenized text of the sequence.
             label: (Optional) string. The label of the example. This should be
             specified for train and dev examples, but not for test examples.
             position: int. The position of the polyphony token.
@@ -60,16 +61,18 @@ class InputExample(object):
         self.text = text
         self.label = label
         self.position = position
+        self.char = char
 
 
 class InputFeatures(object):
     """A single set of features of data."""
 
-    def __init__(self, input_ids, input_mask, label_id, label_pos, type_id):
+    def __init__(self, input_ids, input_mask, label_id, label_pos, char, type_id):
         self.input_ids = input_ids
         self.input_mask = input_mask
         self.label_id = label_id
         self.label_pos = label_pos
+        self.char = char
         self.type_id = type_id
 
 
@@ -105,8 +108,9 @@ class DataProcessor(object):
             text = dct['text']
             label = dct['phone']
             position = dct['position']
+            char = dct['char']
             examples.append(
-                InputExample(guid=guid, text=text, label=label, position=position))
+                InputExample(guid=guid, text=text, label=label, position=position, char=char))
         return examples
 
 
@@ -159,13 +163,14 @@ def convert_examples_to_features(examples, label_list, max_seq_length, tokenizer
 
         label_id = label_map[example.label]
         label_pos = example.position + 1  # First token is [cls]
-        # if label_pos>=max_seq_length-1: label_pos=0
+        if label_pos >= max_seq_length - 1: label_pos = 0
         assert label_pos < max_seq_length
+        # label_ids=[-1]*max_seq_length
+        # label_ids[label_pos + 1] = label_id
+        char = example.char
         # type id
         type_id = [0] * max_seq_length
         type_id[label_pos] = 1
-        # label_ids=[-1]*max_seq_length
-        # label_ids[label_pos + 1] = label_id
         if ex_index < 5:
             logger.info("*** Example ***")
             logger.info("guid: %s" % (example.guid))
@@ -175,12 +180,14 @@ def convert_examples_to_features(examples, label_list, max_seq_length, tokenizer
             logger.info("input_mask: %s" % " ".join([str(x) for x in input_mask]))
             logger.info("label: %s (id = %d)" % (example.label, label_id))
             logger.info("label position: %s" % (label_pos))
+            logger.info("character: %s" % (char))
 
         features.append(
             InputFeatures(input_ids=input_ids,
                           input_mask=input_mask,
                           label_id=label_id,
                           label_pos=label_pos,
+                          char=char,
                           type_id=type_id))
     return features
 
@@ -188,9 +195,12 @@ def convert_examples_to_features(examples, label_list, max_seq_length, tokenizer
 def accuracy(out, labels):
     outputs = np.argmax(out, axis=1)
     return np.sum(outputs == labels)
+
+
 def accuracy_list(out, labels):
     outputs = np.argmax(out, axis=1)
     return np.array(outputs == labels).tolist()
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -203,8 +213,8 @@ def main():
                         help="The input data dir. Should contain the .tsv files (or other data files) for the task.")
     parser.add_argument("--bert_model", default=None, type=str, required=True,
                         help="Bert pre-trained model selected in the list: bert-base-uncased, "
-                        "bert-large-uncased, bert-base-cased, bert-large-cased, bert-base-multilingual-uncased, "
-                        "bert-base-multilingual-cased, bert-base-chinese.")
+                             "bert-large-uncased, bert-base-cased, bert-large-cased, bert-base-multilingual-uncased, "
+                             "bert-base-multilingual-cased, bert-base-chinese.")
     parser.add_argument("--output_dir",
                         default=None,
                         type=str,
@@ -286,7 +296,6 @@ def main():
         ptvsd.enable_attach(address=(args.server_ip, args.server_port), redirect_output=True)
         ptvsd.wait_for_attach()
 
-
     if args.local_rank == -1 or args.no_cuda:
         device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
         n_gpu = torch.cuda.device_count()
@@ -301,7 +310,7 @@ def main():
 
     if args.gradient_accumulation_steps < 1:
         raise ValueError("Invalid gradient_accumulation_steps parameter: {}, should be >= 1".format(
-                            args.gradient_accumulation_steps))
+            args.gradient_accumulation_steps))
 
     args.train_batch_size = args.train_batch_size // args.gradient_accumulation_steps
 
@@ -317,13 +326,11 @@ def main():
     if not os.path.exists(args.output_dir):
         raise ValueError("Output directory ({}) does not exist.".format(args.output_dir))
 
-
     processor = DataProcessor()
     label_list = processor.get_labels(args.data_dir)
     num_labels = len(label_list)
-    logger.info("num_labels:"+str(num_labels))
+    logger.info("num_labels:" + str(num_labels))
     tokenizer = BertTokenizer.from_pretrained(args.bert_model, do_lower_case=args.do_lower_case)
-
 
     global_step = 0
     nb_tr_steps = 0
@@ -335,7 +342,7 @@ def main():
 
     # Load a trained model and config that you have fine-tuned
     config = BertConfig(output_config_file)
-    model = BertForPolyphony2Classification(config, num_labels = num_labels)
+    model = BertForPolyphony2Classification(config, num_labels=num_labels)
     model.load_state_dict(torch.load(output_model_file))
     model.to(device)
 
@@ -343,8 +350,8 @@ def main():
         eval_examples = processor.get_dev_examples(args.data_dir)
         eval_features = convert_examples_to_features(
             eval_examples, label_list, args.max_seq_length, tokenizer)
-        chars=[f.char for f in eval_features]
-        print(len(set(chars)),sorted(list(set(chars))))
+        chars = [f.char for f in eval_features]
+        print(len(set(chars)), sorted(list(set(chars))))
         logger.info("***** Running evaluation *****")
         logger.info("  Num examples = %d", len(eval_examples))
         logger.info("  Batch size = %d", args.eval_batch_size)
@@ -372,11 +379,11 @@ def main():
             with torch.no_grad():
                 tmp_eval_loss = model(input_ids, input_mask, label_ids, label_poss, type_ids)
                 logits = model(input_ids, input_mask, position=label_poss, token_type_ids=type_ids)
-            #print(logits.size())
+            # print(logits.size())
             logits = logits.detach().cpu().numpy()
             label_ids = label_ids.to('cpu').numpy()
             tmp_eval_accuracy = accuracy(logits, label_ids)
-            res_list+=accuracy_list(logits, label_ids)
+            res_list += accuracy_list(logits, label_ids)
 
             eval_loss += tmp_eval_loss.mean().item()
             eval_accuracy += tmp_eval_accuracy
@@ -386,17 +393,17 @@ def main():
 
         eval_loss = eval_loss / nb_eval_steps
         eval_accuracy = eval_accuracy / nb_eval_examples
-        loss = tr_loss/nb_tr_steps if args.do_train else None
-        acc=sum(res_list)/len(res_list)
-        char_count={k:[] for k in list(set(chars))}
-        for i,c in enumerate(chars):
+        loss = tr_loss / nb_tr_steps if args.do_train else None
+        acc = sum(res_list) / len(res_list)
+        char_count = {k: [] for k in list(set(chars))}
+        for i, c in enumerate(chars):
             char_count[c].append(res_list[i])
-        char_acc={k:sum(char_count[k])/len(char_count[k]) for k in char_count}
+        char_acc = {k: sum(char_count[k]) / len(char_count[k]) for k in char_count}
         result = {'eval_loss': eval_loss,
                   'eval_accuracy': eval_accuracy,
                   'global_step': global_step,
                   'loss': loss,
-                  'acc':acc}
+                  'acc': acc}
 
         output_eval_file = os.path.join(args.output_dir, "eval_results.txt")
         with open(output_eval_file, "w") as writer:
@@ -407,6 +414,7 @@ def main():
             for key in sorted(char_acc.keys()):
                 logger.info("  %s = %s", key, str(char_acc[key]))
                 writer.write("%s = %s\n" % (key, str(char_acc[key])))
+
 
 if __name__ == "__main__":
     main()
