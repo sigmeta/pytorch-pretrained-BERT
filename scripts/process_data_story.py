@@ -103,6 +103,36 @@ for word in words:
             phones.add(js_data['phone'])
         train.append(js_data)
 
+    if os.path.exists(data_path + "Annotation/" + word + "/trainingScript/training.Story_R2.xml"):
+        DOMTree = xml.dom.minidom.parse(data_path + "Annotation/" + word + "/trainingScript/training.Story_R2.xml")
+        char = dct[word]
+        collection = DOMTree.documentElement
+        sis = collection.getElementsByTagName("si")
+        for si in sis:
+            js_data = {'id': si.getAttribute('id')}
+            js_data['text'] = si.childNodes[1].childNodes[0].data
+            js_data['position'] = -1
+            js_data['char'] = char
+            for i, w in enumerate(js_data['text']):
+                if w == char:
+                    js_data['position'] = i
+            # cut the text if too long
+            if js_data['position'] > max_length_cut:
+                # print(js_data['position'])
+                js_data['text'] = js_data['text'][js_data['position'] - max_length_cut:]
+                js_data['position'] = max_length_cut
+            assert js_data['position'] != -1
+            assert js_data['text'][js_data['position']] == char
+            for w in si.getElementsByTagName("w"):
+                if w.getAttribute('v') == char:
+                    js_data['phone'] = js_data['char'] + w.getAttribute('p')
+            assert 'phone' in js_data.keys()
+            # assert js_data['phone'] in phones
+            if js_data['phone'] not in phones:
+                print(js_data['phone'])
+                phones.add(js_data['phone'])
+            train.append(js_data)
+
 print(len(phones),phones)
 
 #save
